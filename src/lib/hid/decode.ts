@@ -14,6 +14,8 @@ export interface DecodedPad {
   reportId: number;
   /** 解码采用的字节起点（跳过 00 14 头则为 2）。 */
   offset: number;
+  /** 是否检测到 XInput 头部 (bytes[0]===0x00 && bytes[1]===0x14)。 */
+  hasXInputHeader: boolean;
   buttons: DecodedButton[];
   lt: number; // 0..1
   rt: number; // 0..1
@@ -67,7 +69,8 @@ export function decodeXInput(snap: ReportSnapshot): DecodedPad | null {
   const b = snap.bytes;
   if (b.length < 14) return null;
   // 探测 00 14 头：在则数据从 byte2 起，不在则从 byte0 起。
-  const offset = b[0] === 0x00 && b[1] === 0x14 ? 2 : 0;
+  const hasXInputHeader = b[0] === 0x00 && b[1] === 0x14;
+  const offset = hasXInputHeader ? 2 : 0;
   const o = offset;
   if (b.length < o + 12) return null;
 
@@ -81,6 +84,7 @@ export function decodeXInput(snap: ReportSnapshot): DecodedPad | null {
   return {
     reportId: snap.reportId,
     offset,
+    hasXInputHeader,
     buttons,
     lt: b[o + 2] / 255,
     rt: b[o + 3] / 255,
