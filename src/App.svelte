@@ -19,12 +19,33 @@
     { id: 'input', label: '输入监视', hint: 'WebHID 解码 / 原始' },
     { id: 'log', label: '日志', hint: '收发记录' },
   ];
-  let tab = $state('effect');
+  const TAB_IDS = TABS.map((t) => t.id);
+
+  /** 从 URL hash 取当前 tab（非法/缺省回退到第一个）。 */
+  function tabFromHash(): string {
+    const id = location.hash.replace(/^#/, '');
+    return TAB_IDS.includes(id) ? id : TABS[0].id;
+  }
+
+  // 用 URL hash 记住当前 tab：刷新/收藏/分享链接都能停在同一页。
+  let tab = $state(tabFromHash());
+
+  // tab 变化 → 写回 hash（replaceState 不进历史栈、也不触发 hashchange，无循环）。
+  $effect(() => {
+    const target = '#' + tab;
+    if (location.hash !== target) history.replaceState(null, '', target);
+  });
 
   onMount(() => {
     gamepad.start();
     controller.tryRestore();
-    return () => gamepad.stop();
+    // 手动改 URL / 浏览器前进后退时同步回来。
+    const onHash = () => (tab = tabFromHash());
+    window.addEventListener('hashchange', onHash);
+    return () => {
+      window.removeEventListener('hashchange', onHash);
+      gamepad.stop();
+    };
   });
 </script>
 
