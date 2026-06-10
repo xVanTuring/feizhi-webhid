@@ -1,0 +1,234 @@
+:root {
+  color-scheme: dark;
+  --bg: #15171c;
+  --card: #1e2128;
+  --card-2: #0e1016;
+  --border: #2c313b;
+  --border-2: #353b46;
+  --text: #e6e6e6;
+  --muted: #8a93a0;
+  --muted-2: #9aa3af;
+  --accent: #2d6cff;
+  --accent-soft: #262b34;
+  --ok-bg: #16361f;
+  --ok-fg: #5fd98a;
+  --bad-bg: #3a1b1b;
+  --bad-fg: #ff8585;
+  --warn-fg: #ffcc66;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0 0 4px;
+}
+
+.app {
+  max-width: 880px;
+  margin: 0 auto;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 18px;
+}
+
+.sub code,
+.note code {
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+
+.card h2 {
+  font-size: 14px;
+  margin: 0 0 12px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 8px 0;
+}
+
+.f {
+  width: 84px;
+  color: var(--muted-2);
+  font-size: 13px;
+  flex: none;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+button.sec {
+  background: #363b46;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select,
+input[type="number"] {
+  background: var(--card-2);
+  color: var(--text);
+  border: 1px solid var(--border-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+}
+
+input[type="range"] {
+  flex: 1;
+  min-width: 160px;
+  accent-color: var(--accent);
+}
+
+.chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted-2);
+}
+
+.val {
+  width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #cbd3df;
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+}
+
+.pill.ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.pill.bad {
+  background: var(--bad-bg);
+  color: var(--bad-fg);
+}
+
+.note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.seg {
+  display: inline-flex;
+}
+
+.seg button {
+  background: var(--accent-soft);
+  border: 1px solid var(--border-2);
+  border-radius: 0;
+  padding: 6px 14px;
+}
+
+.seg button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.seg button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.seg button:last-child {
+  border-radius: 0 7px 7px 0;
+}
+
+a {
+  color: #6fa8ff;
+}
+
+/* —— 大 Tab —— */
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 5px;
+}
+.tab {
+  flex: 1 1 130px;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  color: var(--muted-2);
+  text-align: left;
+}
+.tab:hover {
+  background: var(--accent-soft);
+}
+.tab.on {
+  background: var(--accent);
+  color: #fff;
+}
+.tab .tlabel {
+  font-size: 14px;
+  font-weight: 500;
+}
+.tab .thint {
+  font-size: 11px;
+  opacity: 0.7;
+}
+.hidden {
+  display: none;
+}

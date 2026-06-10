@@ -1,0 +1,23 @@
+{
+  "name": "feizhi-webhid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "飞智八爪鱼5 WebHID 配置台 — 自适应扳机配置 + 手柄输入读取，免飞智驱动/服务",
+  "scripts": {
+    "dev": "vite",
+    "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "@types/w3c-web-hid": "^1.0.6",
+    "svelte": "^5.19.0",
+    "svelte-check": "^4.1.4",
+    "tslib": "^2.8.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.11"
+  }
+}
