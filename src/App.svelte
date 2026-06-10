@@ -5,6 +5,7 @@
   import ConnectionCard from './lib/components/ConnectionCard.svelte';
   import TriggerConfigCard from './lib/components/TriggerConfigCard.svelte';
   import GripBindCard from './lib/components/GripBindCard.svelte';
+  import ConfigCard from './lib/components/ConfigCard.svelte';
   import TelemetryCard from './lib/components/TelemetryCard.svelte';
   import InputViewer from './lib/components/InputViewer.svelte';
   import RawMonitor from './lib/components/RawMonitor.svelte';
@@ -13,6 +14,7 @@
   const TABS = [
     { id: 'effect', label: '扳机效果', hint: 'cmd81 手动测试' },
     { id: 'grip', label: '内置震动 · WRC7类', hint: 'cmd82 rumble 绑定' },
+    { id: 'config', label: '配置 · 键位/体感', hint: '按键映射 / 陀螺仪' },
     { id: 'telemetry', label: '遥测驱动', hint: '真·力反馈 (规划中)' },
     { id: 'input', label: '输入监视', hint: 'WebHID 解码 / 原始' },
     { id: 'log', label: '日志', hint: '收发记录' },
@@ -51,6 +53,7 @@
   <!-- CSS 隐藏而非卸载：切 tab 不丢各页的本地状态（滑块值/选中的游戏等） -->
   <div class:hidden={tab !== 'effect'}><TriggerConfigCard /></div>
   <div class:hidden={tab !== 'grip'}><GripBindCard /></div>
+  <div class:hidden={tab !== 'config'}><ConfigCard /></div>
   <div class:hidden={tab !== 'telemetry'}><TelemetryCard /></div>
   <div class:hidden={tab !== 'input'}>
     <InputViewer />

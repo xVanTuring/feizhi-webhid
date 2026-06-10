@@ -8,6 +8,22 @@ import { buildTriggerFrame } from './hid/frame';
 import { buildGripFrame, unbindParams, type GripBindParams } from './hid/gripbind';
 import { TriggerMode, TriggerSide } from './hid/triggers';
 import { sleep, toHex } from './hid/util';
+import {
+  CMD_APPLY,
+  CMD_READ_MAPPING,
+  CMD_SAVE,
+  CMD_WRITE_PACK,
+  CMD_WRITE_START,
+  PKG_COUNT,
+  PKG_SIZE,
+  buildApplyFrame,
+  buildReadMappingFrame,
+  buildSaveFrame,
+  buildWritePackFrame,
+  buildWriteStartFrame,
+  extractPackFromAck,
+  isAck,
+} from './hid/config';
 
 export type LogLevel = 'info' | 'tx' | 'rx' | 'warn' | 'error';
 export interface LogEntry {
@@ -174,7 +190,141 @@ class FlydigiController {
     await this.bindGrip(unbindParams(p));
   }
 
+  // ===== 映射配置（按键映射 + 陀螺仪开关） =====
+
+  /** 读取指定 cfgId 的完整映射配置原始字节（84 * 20 = 1680 bytes）。 */
+  async readMappingConfig(cfgId: number): Promise<Uint8Array> {
+    if (!this.device?.opened) throw new Error('未连接');
+    const dev = this.device;
+
+    const raw = new Uint8Array(PKG_COUNT * PKG_SIZE);
+    let received = 0;
+    // 先挂监听再发请求：首包 ACK 可能早于 sendReport 返回，挂晚了会丢包。
+    const done = this.waitForAck(
+      CMD_READ_MAPPING,
+      (bytes) => {
+        const info = extractPackFromAck(bytes);
+        if (!info) return false;
+        if (info.total !== PKG_COUNT) return false;
+        raw.set(info.payload, info.num * PKG_SIZE);
+        received++;
+        if (info.num + 1 >= info.total) return raw;
+        return false;
+      },
+      6000,
+    );
+    const frame = buildReadMappingFrame(cfgId, this.reportLen);
+    await dev.sendReport(this.reportId, frame);
+    this.log('tx', `[${hexId(this.reportId)}] ReadMapping cfg=${cfgId}`);
+    const result = await done;
+    this.log('rx', `ReadMapping 完成，共 ${received}/${PKG_COUNT} 包`);
+    return result as Uint8Array;
+  }
+
+  /**
+   * 把完整映射配置写回手柄（全量写）。
+   * 逐包发送并等待本包 0xA5 ACK 再发下一包，复刻原版串行命令队列
+   * （WriteMappingConfigCommandFactory 把每个分包当独立单 ACK 命令排队）。
+   */
+  async writeAllMappingConfig(cfgId: number, raw: Uint8Array): Promise<void> {
+    if (!this.device?.opened) throw new Error('未连接');
+    if (raw.length !== PKG_COUNT * PKG_SIZE) throw new Error('配置长度错误');
+    const dev = this.device;
+
+    // 写头(A4)：先挂监听再发。
+    const startAck = this.waitForAck(CMD_WRITE_START, (b) => isAck(b, CMD_WRITE_START), 2000);
+    const startFrame = buildWriteStartFrame(cfgId, 0, PKG_COUNT, this.reportLen);
+    await dev.sendReport(this.reportId, startFrame);
+    this.log('tx', `[${hexId(this.reportId)}] WriteStart cfg=${cfgId} pkts=${PKG_COUNT}`);
+    await startAck;
+
+    // 84 个分包(A5)：发一包→等本包 ACK→发下一包。
+    for (let i = 0; i < PKG_COUNT; i++) {
+      const pack = raw.slice(i * PKG_SIZE, (i + 1) * PKG_SIZE);
+      const packFrame = buildWritePackFrame(i, pack, this.reportLen);
+      const packAck = this.waitForAck(CMD_WRITE_PACK, (b) => isAck(b, CMD_WRITE_PACK), 1500);
+      await dev.sendReport(this.reportId, packFrame);
+      await packAck;
+    }
+    this.log('tx', `[${hexId(this.reportId)}] WritePack ×${PKG_COUNT} 完成`);
+  }
+
+  /** 应用配置（切档）。 */
+  async applyMappingConfig(cfgId: number): Promise<void> {
+    if (!this.device?.opened) throw new Error('未连接');
+    const ack = this.waitForAck(CMD_APPLY, (b) => isAck(b, CMD_APPLY), 2000);
+    const frame = buildApplyFrame(cfgId, this.reportLen);
+    await this.device.sendReport(this.reportId, frame);
+    this.log('tx', `[${hexId(this.reportId)}] Apply cfg=${cfgId}`);
+    await ack;
+  }
+
+  /** 保存配置到手柄 Flash。 */
+  async saveMappingConfig(version: number): Promise<void> {
+    if (!this.device?.opened) throw new Error('未连接');
+    const ack = this.waitForAck(CMD_SAVE, (b) => isAck(b, CMD_SAVE), 5000);
+    const frame = buildSaveFrame(version, this.reportLen);
+    await this.device.sendReport(this.reportId, frame);
+    this.log('tx', `[${hexId(this.reportId)}] Save version=${version}`);
+    await ack;
+  }
+
+  /**
+   * 一键读取→修改→写入→保存→应用。
+   * 顺序复刻原版：先 Save 落 flash，再 Apply 切档（原版 SaveSwitch 把二者合并成
+   * 一条命令，语义即“先持久化再激活”），避免 apply-before-save 时固件从旧 flash 重载。
+   */
+  async commitMappingConfig(
+    cfgId: number,
+    modify: (raw: Uint8Array) => void,
+  ): Promise<void> {
+    const raw = await this.readMappingConfig(cfgId);
+    modify(raw);
+    // 版本号 +1，保证 != 当前，否则固件可能拒写
+    const nextVersion = (raw[225] | (raw[226] << 8)) + 1;
+    raw[225] = nextVersion & 0xff;
+    raw[226] = (nextVersion >> 8) & 0xff;
+    await this.writeAllMappingConfig(cfgId, raw);
+    await this.saveMappingConfig(nextVersion);
+    await this.applyMappingConfig(cfgId);
+    this.log('info', '配置已写入并保存');
+  }
+
   // —— 内部实现 ——
+
+  /**
+   * 等待带有指定 cmd 的 ACK 输入报文。
+   * predicate 返回 truthy 时 resolve；返回的值会作为 Promise 结果。
+   * 超时则 reject。
+   */
+  private waitForAck<T>(
+    expectedCmd: number,
+    predicate: (bytes: Uint8Array) => T | false,
+    timeoutMs = 2000,
+  ): Promise<NonNullable<T>> {
+    return new Promise((resolve, reject) => {
+      const onReport = (e: HIDInputReportEvent) => {
+        const bytes = new Uint8Array(e.data.buffer);
+        if (bytes.length < 5 || bytes[0] !== 0x5a || bytes[1] !== 0xa5 || bytes[2] !== expectedCmd) {
+          return;
+        }
+        const result = predicate(bytes);
+        if (result !== false) {
+          cleanup();
+          resolve(result as NonNullable<T>);
+        }
+      };
+      let timer = setTimeout(() => {
+        cleanup();
+        reject(new Error(`等待 0x${expectedCmd.toString(16).toUpperCase()} ACK 超时`));
+      }, timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        for (const dev of this.devices) dev.removeEventListener('inputreport', onReport);
+      };
+      for (const dev of this.devices) dev.addEventListener('inputreport', onReport);
+    });
+  }
 
   /**
    * 打开授权到的全部设备并监听各自的输入报文。
