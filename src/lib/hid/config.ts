@@ -305,6 +305,124 @@ export function writeKeyMap(raw: Uint8Array, fromKey: ControllerKey, m: KeyMappi
   raw[off + 2] = b2;
 }
 
+// ===== 宏 (Macro) =====
+// 布局照搬反编译 MappingConfigParserV30.ParseMacroConfigToArray / ParseToMacroConfig
+// (Flydigi.ControllerSdk.cs:3921/4001) + V31 扩展(:4620/4680)。固件自带回放引擎，写入即生效。
+//   区 230..767(538B)：[count][offset表 5B] 之后是 ≤5 个宏单元，按 keyId 自描述。
+//     宏单元头 4B：[keyId, count_l, count_h, type(MacroEnableType)]
+//     步骤 4B：[time_l, time_h(LE16 累计, 单位=10ms@V3.1), button(keyId), event(MacroEvent)]
+//   区 820..824(5B)：每个宏的循环间隔(ms/10)。
+//   键表里宏键的 3 字节恒为 [32,0,0]，靠宏单元里的 keyId 反查归属。
+
+/** 宏单步触发方式。来源 MacroEnableType。 */
+export enum MacroEnableType {
+  None = 0,
+  Once = 1, // 按下触发一次
+  Press = 2, // 按住循环
+  Click = 3, // 单击开关
+}
+
+/** 宏动作事件。来源 MacroActionEvent。 */
+export enum MacroEvent {
+  Release = 0, // 抬起
+  Press = 1, // 按下
+  LeftJoystick = 2,
+  RightJoystick = 3,
+  Hold = 5, // 按压(按住)
+}
+
+export interface MacroStep {
+  event: MacroEvent;
+  key: ControllerKey;
+  /** 相对上一步的间隔(ms)；序列化时累加成绝对时间。 */
+  delayMs: number;
+}
+export interface MacroItem {
+  key: ControllerKey;
+  type: MacroEnableType;
+  /** 循环间隔(ms)，仅「按住循环」用。 */
+  intervalMs: number;
+  steps: MacroStep[];
+}
+
+const MACRO_OFFSET = 230;
+const MACRO_REGION_LEN = 538;
+const MACRO_CYCLE_OFFSET = 820;
+export const MAX_MACROS = 5; // V3.1
+const MACRO_TIME_UNIT = 10; // ms/单位 @V3.1
+const MACRO_HEADER = 1 + MAX_MACROS; // count + 偏移表
+
+/** 解析宏区为结构化宏列表（顺序连续读取，忽略随机访问偏移表）。 */
+export function readMacros(raw: Uint8Array): MacroItem[] {
+  if (raw.length < MACRO_OFFSET + MACRO_HEADER) return [];
+  const count = raw[MACRO_OFFSET];
+  if (count === 0 || count === 0xff) return [];
+  const macros: MacroItem[] = [];
+  let ptr = MACRO_OFFSET + MACRO_HEADER;
+  for (let m = 0; m < count && m < MAX_MACROS; m++) {
+    if (ptr + 4 > MACRO_OFFSET + MACRO_REGION_LEN) break;
+    const key = raw[ptr] as ControllerKey;
+    const actionCount = raw[ptr + 1] | (raw[ptr + 2] << 8);
+    const type = raw[ptr + 3] as MacroEnableType;
+    ptr += 4;
+    const steps: MacroStep[] = [];
+    let prev = 0;
+    for (let s = 0; s < actionCount; s++) {
+      if (ptr + 4 > MACRO_OFFSET + MACRO_REGION_LEN) break;
+      const t = raw[ptr] | (raw[ptr + 1] << 8);
+      steps.push({ event: raw[ptr + 3] as MacroEvent, key: raw[ptr + 2] as ControllerKey, delayMs: (t - prev) * MACRO_TIME_UNIT });
+      prev = t;
+      ptr += 4;
+    }
+    const cyc = raw[MACRO_CYCLE_OFFSET + m];
+    macros.push({ key, type, intervalMs: cyc === 0xff ? 0 : cyc * 10, steps });
+  }
+  return macros;
+}
+
+/** 把结构化宏列表序列化回宏区 + 循环间隔区（与 readMacros 对称，复刻原版字节）。 */
+export function writeMacros(raw: Uint8Array, macros: MacroItem[]): void {
+  for (let i = MACRO_OFFSET; i < MACRO_OFFSET + MACRO_REGION_LEN; i++) raw[i] = 0xff;
+  for (let i = MACRO_CYCLE_OFFSET; i < MACRO_CYCLE_OFFSET + MAX_MACROS; i++) raw[i] = 0xff;
+  const list: number[] = new Array(MACRO_HEADER).fill(0);
+  list[0] = macros.length;
+  let num = 0;
+  for (let j = 0; j < macros.length; j++) {
+    if (j !== macros.length - 1) {
+      num += macros[j].steps.length + 1;
+      list[j + 2] = num & 0xff;
+    }
+  }
+  for (const macro of macros) {
+    list.push(macro.key & 0xff, macro.steps.length & 0xff, (macro.steps.length >> 8) & 0xff, macro.type & 0xff);
+    let cum = 0;
+    for (const st of macro.steps) {
+      cum += Math.round(st.delayMs / MACRO_TIME_UNIT);
+      list.push(cum & 0xff, (cum >> 8) & 0xff, st.key & 0xff, st.event & 0xff);
+    }
+  }
+  const n = Math.min(list.length, MACRO_REGION_LEN);
+  for (let i = 0; i < n; i++) raw[MACRO_OFFSET + i] = list[i];
+  for (let m = 0; m < macros.length && m < MAX_MACROS; m++) {
+    raw[MACRO_CYCLE_OFFSET + m] = Math.max(0, Math.min(255, Math.round((macros[m].intervalMs || 0) / 10)));
+  }
+}
+
+/**
+ * 安全门：parse→serialize 能否原样复现设备现有宏字节。
+ * 无宏(空)时恒为 true（写新宏走的是已验证的原版编码）；有宏但复现不一致时返回 false，
+ * 此时禁止编辑宏、原样保留字节，避免把未知固件变体的宏写坏。
+ */
+export function macrosRoundTripOk(raw: Uint8Array): boolean {
+  const macros = readMacros(raw);
+  if (macros.length === 0) return true;
+  const copy = raw.slice();
+  writeMacros(copy, macros);
+  for (let i = MACRO_OFFSET; i < MACRO_OFFSET + MACRO_REGION_LEN; i++) if (raw[i] !== copy[i]) return false;
+  for (let i = MACRO_CYCLE_OFFSET; i < MACRO_CYCLE_OFFSET + MAX_MACROS; i++) if (raw[i] !== copy[i]) return false;
+  return true;
+}
+
 export interface MotionOptions {
   enableKey0?: ControllerKey;
   enableKey1?: ControllerKey;

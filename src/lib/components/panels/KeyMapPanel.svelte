@@ -4,14 +4,18 @@
   import { ContinuousEnable, ControllerKey, KEY_LABELS, MAPPABLE_KEYS, type KeyMapping } from '../../hid/config';
   import Panel from '../../ui/Panel.svelte';
   import Segmented from '../../ui/Segmented.svelte';
+  import MacroEditor from './MacroEditor.svelte';
 
   // 手柄图上画不出的键，放这里当 chip 选择（与 ControllerView 的 HIT 表互补）。
   const OFF_KEYS = [ControllerKey.Menu, ControllerKey.Turbo, ControllerKey.Back, ControllerKey.C, ControllerKey.Z];
 
-  const MODE_OPTS = [
+  type Mode = 'key' | 'turbo' | 'macro';
+  // 宏区不可安全编辑时（未知固件变体）隐藏「宏」选项，避免写坏。
+  const MODE_OPTS = $derived([
     { value: 'key', label: '单键' },
     { value: 'turbo', label: '连发' },
-  ];
+    ...(mapping.macroEditable ? [{ value: 'macro', label: '宏' }] : []),
+  ]);
   const ENABLE_OPTS = [
     { v: ContinuousEnable.Press, label: '按住连发' },
     { v: ContinuousEnable.Click, label: '单击切换' },
@@ -19,11 +23,15 @@
 
   const sel = $derived(mapping.selectedKey);
   const cur = $derived(sel != null ? mapping.mappings[sel] : undefined);
-  const readonly = $derived(cur?.kind === 'macro' || cur?.kind === 'special');
+  // 键盘/鼠标(special) 永远只读；宏只在格式可复现时可编辑。
+  const isSpecial = $derived(cur?.kind === 'special');
+  const macroLocked = $derived(cur?.kind === 'macro' && !mapping.macroEditable);
+  const readonly = $derived(isSpecial || macroLocked);
+  const macroEditing = $derived(sel != null && cur?.kind === 'macro' && mapping.macroEditable);
   const mapped = $derived(MAPPABLE_KEYS.filter((k) => mapping.mappings[k] && mapping.mappings[k].kind !== 'none'));
 
   // 编辑器本地状态，仅在「选中键变化」时从当前映射回填，避免与用户输入打架。
-  let mode = $state<'key' | 'turbo'>('key');
+  let mode = $state<Mode>('key');
   let target = $state<number>(255); // 255 = 未选目标
   let enable = $state<ContinuousEnable>(ContinuousEnable.Press);
   let freq = $state(12);
@@ -34,7 +42,10 @@
     if (k === lastSel) return;
     lastSel = k;
     const c = k != null ? mapping.mappings[k] : undefined;
-    if (c?.kind === 'turbo') {
+    if (c?.kind === 'macro') {
+      mode = 'macro';
+      target = 255;
+    } else if (c?.kind === 'turbo') {
       mode = 'turbo';
       target = c.target;
       enable = c.enable;
@@ -52,7 +63,9 @@
 
   function commit() {
     if (sel == null) return;
-    if (target === 255) {
+    if (mode === 'macro') {
+      mapping.setMapping(sel, { kind: 'macro' });
+    } else if (target === 255) {
       mapping.clearMapping(sel);
     } else if (mode === 'turbo') {
       mapping.setMapping(sel, { kind: 'turbo', target, enable, freq });
@@ -67,11 +80,11 @@
     if (m.kind === 'special') return 'KB';
     return '';
   }
-  function describe(m: KeyMapping): string {
+  function describe(k: ControllerKey, m: KeyMapping): string {
     if (m.kind === 'turbo') return `连发 → ${KEY_LABELS[m.target]} · ${m.freq}/s`;
     if (m.kind === 'key') return KEY_LABELS[m.target] ?? '';
-    if (m.kind === 'macro') return '宏（只读）';
-    if (m.kind === 'special') return '键盘 / 多功能（只读）';
+    if (m.kind === 'macro') return `宏 · ${mapping.getMacro(k)?.steps.length ?? 0} 步`;
+    if (m.kind === 'special') return '键盘 / 鼠标（需 PC，只读）';
     return '';
   }
 </script>
@@ -93,17 +106,23 @@
         <span class="ehint">未选择按键 — 点击上方手柄图上任意按键，或在手柄上按下该键。</span>
       {:else if readonly}
         <span class="ekey">{KEY_LABELS[sel]}</span>
-        <span class="ro">{cur?.kind === 'macro' ? '宏映射' : '键盘 / 多功能映射'} — 本工具暂只读（数据存于独立区域）</span>
+        {#if isSpecial}
+          <span class="ro">键盘 / 鼠标映射 — 需 PC 注入驱动，纯 WebHID 无法实现；已识别并原样保留</span>
+        {:else}
+          <span class="ro">宏 — 本机宏数据格式未识别，为防写坏已设为只读</span>
+        {/if}
         <button class="btn btn-ghost sm" disabled={mapping.busy} onclick={() => mapping.clearMapping(sel)}>清除</button>
       {:else}
         <span class="ekey">{KEY_LABELS[sel]}</span>
-        <Segmented value={mode} options={MODE_OPTS} onchange={(m) => { mode = m as 'key' | 'turbo'; commit(); }} />
-        <select value={target} onchange={(e) => { target = Number((e.currentTarget as HTMLSelectElement).value); commit(); }} disabled={mapping.busy}>
-          <option value={255}>不映射（默认）</option>
-          {#each MAPPABLE_KEYS as to (to)}
-            {#if to !== sel}<option value={to}>{KEY_LABELS[to]}</option>{/if}
-          {/each}
-        </select>
+        <Segmented value={mode} options={MODE_OPTS} onchange={(m) => { mode = m as Mode; commit(); }} />
+        {#if mode !== 'macro'}
+          <select value={target} onchange={(e) => { target = Number((e.currentTarget as HTMLSelectElement).value); commit(); }} disabled={mapping.busy}>
+            <option value={255}>不映射（默认）</option>
+            {#each MAPPABLE_KEYS as to (to)}
+              {#if to !== sel}<option value={to}>{KEY_LABELS[to]}</option>{/if}
+            {/each}
+          </select>
+        {/if}
         {#if mode === 'turbo'}
           <select value={enable} onchange={(e) => { enable = Number((e.currentTarget as HTMLSelectElement).value); commit(); }} disabled={target === 255}>
             {#each ENABLE_OPTS as o (o.v)}<option value={o.v}>{o.label}</option>{/each}
@@ -113,9 +132,17 @@
             次/秒
           </label>
         {/if}
-        <button class="btn btn-ghost sm" disabled={target === 255 || mapping.busy} onclick={() => { target = 255; commit(); }}>清除</button>
+        {#if mode !== 'macro'}
+          <button class="btn btn-ghost sm" disabled={target === 255 || mapping.busy} onclick={() => { target = 255; commit(); }}>清除</button>
+        {:else}
+          <button class="btn btn-ghost sm" disabled={mapping.busy} onclick={() => mapping.clearMapping(sel)}>删除宏</button>
+        {/if}
       {/if}
     </div>
+
+    {#if macroEditing && sel != null}
+      <MacroEditor mkey={sel} />
+    {/if}
 
     <!-- 手柄图上没有的功能键 -->
     <div class="section">
@@ -144,11 +171,11 @@
         <div class="maplist">
           {#each mapped as k (k)}
             {@const m = mapping.mappings[k]}
-            <div class="mrow" class:on={sel === k} class:turbo={m.kind === 'turbo'}>
+            <div class="mrow" class:on={sel === k} class:turbo={m.kind === 'turbo'} class:macro={m.kind === 'macro'}>
               <button class="mrow-main" onclick={() => mapping.selectKey(k)}>
                 <span class="mk">{KEY_LABELS[k]}</span>
                 <span class="mar">→</span>
-                <span class="mt">{describe(m)}</span>
+                <span class="mt">{describe(k, m)}</span>
               </button>
               <button class="mx" aria-label="清除映射" disabled={mapping.busy} onclick={() => mapping.clearMapping(k)}>×</button>
             </div>
@@ -162,7 +189,8 @@
     <p class="legend note">
       <span class="lg key"></span> 单键 ·
       <span class="lg turbo"></span> 连发 ·
-      <span class="lg opaque"></span> 宏 / 键盘（来自原版配置，本工具暂只读但会原样保留）
+      <span class="lg macro"></span> 宏（可编辑，固件回放）·
+      <span class="lg opaque"></span> 键盘/鼠标（需 PC，只读）
     </p>
   {/if}
 </Panel>
@@ -328,6 +356,9 @@
   .mrow.turbo .mt {
     color: var(--violet);
   }
+  .mrow.macro .mt {
+    color: #34d399;
+  }
   .mrow-main {
     flex: 1;
     display: flex;
@@ -392,6 +423,9 @@
   }
   .lg.turbo {
     background: var(--violet);
+  }
+  .lg.macro {
+    background: #10b981;
   }
   .lg.opaque {
     background: #4b5570;

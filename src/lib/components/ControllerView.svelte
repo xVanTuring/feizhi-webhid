@@ -303,8 +303,9 @@
           {@const sel = selected === h.key}
           {@const mapped = isMapped(h)}
           {@const turbo = isTurbo(h)}
+          {@const macro = mappings[h.key]?.kind === 'macro'}
           {@const ba = badgeAt(h)}
-          <g class="iz" class:mapped class:sel class:turbo>
+          <g class="iz" class:mapped class:sel class:turbo class:macro>
             {#if h.kind === 'circle'}
               {#if sel}<circle class="ring" cx={h.cx} cy={h.cy} r={(h.r ?? 0) + 4} />{/if}
               <circle
@@ -344,7 +345,7 @@
               {@const tl = targetLabel(h)}
               {@const kind = mappings[h.key]?.kind}
               {@const pw = Math.max(20, tl.length * 8 + 12)}
-              <g class="pill" class:turbo class:opaque={kind === 'macro' || kind === 'special'} transform="translate({ba.x} {ba.y})">
+              <g class="pill" class:turbo class:macro={kind === 'macro'} class:opaque={kind === 'special'} transform="translate({ba.x} {ba.y})">
                 <rect x={-pw / 2} y="-8.5" width={pw} height="17" rx="8.5" />
                 <text x="0" y="4" text-anchor="middle">{tl}</text>
               </g>
@@ -403,6 +404,10 @@
     fill: rgba(139, 92, 246, 0.18);
     stroke: var(--violet);
   }
+  .iz.macro .hit {
+    fill: rgba(16, 185, 129, 0.18);
+    stroke: #34d399;
+  }
   .iz.sel .hit {
     fill: rgba(59, 130, 246, 0.3);
     stroke: #fff;
@@ -431,6 +436,9 @@
   }
   .pill.turbo rect {
     fill: var(--violet);
+  }
+  .pill.macro rect {
+    fill: #10b981;
   }
   .pill.opaque rect {
     fill: #4b5570;
