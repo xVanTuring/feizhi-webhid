@@ -212,7 +212,6 @@
   .svg  { width: 100%; height: auto; display: block; }
 
   .lbl  { font-size: 10px; font-family: var(--mono, monospace); fill: #505565; pointer-events: none; }
-  .lbl.sm { font-size: 11px; }
   .lbl.on { fill: #cbd5e1; }
 
   .tval { font-size: 8px;  font-family: var(--mono, monospace); fill: #3a3d50; pointer-events: none; }
