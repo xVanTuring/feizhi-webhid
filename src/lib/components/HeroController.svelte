@@ -1,13 +1,21 @@
 <script lang="ts">
   import { controller } from '../controller.svelte';
   import { gamepad } from '../gamepad.svelte';
+  import { mapping } from '../mapping.svelte';
+  import { ui } from '../ui.svelte';
   import { decodePad, pickGamepadReport } from '../hid/decode';
+  import { ControllerKey, KEY_LABELS } from '../hid/config';
   import ControllerView from './ControllerView.svelte';
 
   // 输入源：原始映射开启 → NewXInput(全物理键，独占)；否则 → Gamepad API(基础)。
   const target = $derived(pickGamepadReport(controller.reports));
   const webhidPad = $derived(target ? decodePad(target) : null);
   const pad = $derived(controller.rawInputActive ? webhidPad : gamepad.pad);
+
+  // 映射模式：在「按键」标签且已读取配置时，手柄图变为可点选的映射选择面。
+  const mapMode = $derived(ui.tab === 'buttons' && mapping.loaded);
+  const selLabel = $derived(mapping.selectedKey != null ? KEY_LABELS[mapping.selectedKey] : null);
+  const pick = (key: ControllerKey) => mapping.selectKey(key);
 
   const formatBadge = $derived.by(() => {
     if (!controller.connected) return null;
@@ -44,24 +52,38 @@
     {/if}
   </div>
 
-  <div class="stage">
-    <ControllerView {pad} />
-    {#if !controller.connected}
-      <div class="overlay">
-        <div class="ov-icon">🎮</div>
-        <div class="ov-text">连接手柄后，按键 / 摇杆 / 扳机将在此实时点亮</div>
-      </div>
-    {:else if !pad}
-      <div class="overlay subtle">
-        <div class="ov-text">
-          基础模式未识别此手柄（macOS Chrome 常见）。点上方<b>「开启原始映射」</b>读取全部物理键（含 M1-M6）。
+  <div class="stage" class:mapping={mapMode}>
+    <ControllerView
+      {pad}
+      interactive={mapMode}
+      mappings={mapMode ? mapping.mappings : {}}
+      selected={mapMode ? mapping.selectedKey : null}
+      onpick={pick}
+    />
+    {#if !mapMode}
+      {#if !controller.connected}
+        <div class="overlay">
+          <div class="ov-icon">🎮</div>
+          <div class="ov-text">连接手柄后，按键 / 摇杆 / 扳机将在此实时点亮</div>
         </div>
-      </div>
+      {:else if !pad}
+        <div class="overlay subtle">
+          <div class="ov-text">
+            基础模式未识别此手柄（macOS Chrome 常见）。点上方<b>「开启原始映射」</b>读取全部物理键（含 M1-M6）。
+          </div>
+        </div>
+      {/if}
     {/if}
   </div>
 
   <div class="keys">
-    {#if pressed.length}
+    {#if mapMode}
+      {#if selLabel}
+        <span class="map-hint sel">已选中 <b>{selLabel}</b> — 在下方设置映射目标</span>
+      {:else}
+        <span class="map-hint">点击手柄上的按键来设置映射 · 已映射的按键会高亮并显示目标</span>
+      {/if}
+    {:else if pressed.length}
       {#each pressed as x (x.name)}
         <span class="chip">{x.name}</span>
       {/each}
@@ -177,6 +199,7 @@
   .overlay {
     position: absolute;
     inset: 0;
+    pointer-events: none;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -237,5 +260,18 @@
     font-size: 11.5px;
     color: var(--muted);
     align-self: center;
+  }
+  .map-hint {
+    font-size: 12px;
+    color: var(--muted-2);
+    align-self: center;
+  }
+  .map-hint.sel {
+    color: var(--accent-2);
+  }
+  .map-hint b {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--accent-2);
   }
 </style>

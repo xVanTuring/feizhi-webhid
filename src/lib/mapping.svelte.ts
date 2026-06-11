@@ -29,6 +29,8 @@ class MappingStore {
 
   /** 各物理键 → 映射目标（null = 不映射/默认）。 */
   mappings = $state<Record<number, number | null>>({});
+  /** 当前在手柄图上选中、正在编辑映射的物理键（null = 未选）。 */
+  selectedKey = $state<ControllerKey | null>(null);
   motionMode = $state<MotionMapType>(MotionMapType.Off);
   motionSens = $state(50);
   motionDead = $state(10);
@@ -55,8 +57,14 @@ class MappingStore {
     this.cfgId = id;
     this.rawConfig = null;
     this.dirty = false;
+    this.selectedKey = null;
     this.status = '';
     if (controller.connected) await this.read();
+  }
+
+  /** 点击手柄图上的按键：选中 / 再点取消。 */
+  selectKey(key: ControllerKey) {
+    this.selectedKey = this.selectedKey === key ? null : key;
   }
 
   async read() {
@@ -70,6 +78,7 @@ class MappingStore {
       this.rawConfig = await controller.readMappingConfig(this.cfgId);
       this.refreshFromRaw();
       this.dirty = false;
+      this.selectedKey = null;
       this.status = `已读取档位 ${this.cfgId + 1} · 版本 ${this.version}`;
     } catch (e) {
       this.status = '读取失败: ' + (e instanceof Error ? e.message : String(e));

@@ -1,7 +1,87 @@
 <script lang="ts">
   import type { DecodedPad } from '../hid/decode';
+  import { ControllerKey as K, KEY_LABELS } from '../hid/config';
 
-  let { pad = null }: { pad: DecodedPad | null } = $props();
+  let {
+    pad = null,
+    interactive = false,
+    mappings = {},
+    selected = null,
+    onpick,
+  }: {
+    pad?: DecodedPad | null;
+    /** 映射模式：按键可点选，显示映射状态。 */
+    interactive?: boolean;
+    /** 物理键 → 映射目标（null = 未映射）。 */
+    mappings?: Record<number, number | null>;
+    /** 当前选中的物理键。 */
+    selected?: ControllerKey | null;
+    onpick?: (key: ControllerKey) => void;
+  } = $props();
+
+  type ControllerKey = K;
+
+  // 可点选按键的命中区，坐标镜像下方各按键的绘制坐标。
+  // compact = 只画高亮点不画目标气泡（D-pad / Home 等局促处）。
+  type Hit = {
+    key: ControllerKey;
+    kind: 'circle' | 'rect';
+    cx?: number; cy?: number; r?: number;
+    x?: number; y?: number; w?: number; h?: number;
+    rot?: [number, number, number];
+    side?: 'above' | 'below';
+    bx?: number; by?: number;
+    compact?: boolean;
+  };
+
+  const HIT: Hit[] = [
+    { key: K.Lt, kind: 'rect', x: 6, y: 3, w: 40, h: 48, side: 'below' },
+    { key: K.Rt, kind: 'rect', x: 460, y: 3, w: 40, h: 48, side: 'below' },
+    { key: K.M5, kind: 'rect', x: 53, y: 13, w: 58, h: 28, side: 'below' },
+    { key: K.M6, kind: 'rect', x: 397, y: 13, w: 58, h: 28, side: 'below' },
+    { key: K.Lb, kind: 'rect', x: 9, y: 51, w: 75, h: 28, side: 'below' },
+    { key: K.Rb, kind: 'rect', x: 423, y: 51, w: 75, h: 28, side: 'below' },
+    { key: K.Thl, kind: 'circle', cx: 132.5, cy: 168.5, r: 32.5, side: 'above' },
+    { key: K.Thr, kind: 'circle', cx: 317.5, cy: 232.5, r: 32.5, side: 'above' },
+    { key: K.Up, kind: 'circle', cx: 198, cy: 206, r: 13, compact: true },
+    { key: K.Down, kind: 'circle', cx: 198, cy: 260, r: 13, compact: true },
+    { key: K.Left, kind: 'circle', cx: 172, cy: 233, r: 13, compact: true },
+    { key: K.Right, kind: 'circle', cx: 226, cy: 233, r: 13, compact: true },
+    { key: K.A, kind: 'circle', cx: 380, cy: 204, r: 14, side: 'below' },
+    { key: K.B, kind: 'circle', cx: 409, cy: 175, r: 14, side: 'above' },
+    { key: K.X, kind: 'circle', cx: 351, cy: 175, r: 14, side: 'above' },
+    { key: K.Y, kind: 'circle', cx: 380, cy: 146, r: 14, side: 'above' },
+    { key: K.Home, kind: 'circle', cx: 253, cy: 112, r: 16, compact: true },
+    { key: K.Select, kind: 'rect', x: 171, y: 118, w: 40, h: 18, rot: [51, 191, 127], bx: 191, by: 103 },
+    { key: K.Start, kind: 'rect', x: 296, y: 118, w: 40, h: 18, rot: [-51, 316, 127], bx: 316, by: 103 },
+    { key: K.M2, kind: 'rect', x: 153, y: 308, w: 68, h: 44, side: 'above' },
+    { key: K.M1, kind: 'rect', x: 287, y: 308, w: 68, h: 44, side: 'above' },
+    { key: K.M4, kind: 'rect', x: 136, y: 368, w: 97, h: 36, side: 'above' },
+    { key: K.M3, kind: 'rect', x: 275, y: 368, w: 97, h: 36, side: 'above' },
+  ];
+
+  const isMapped = (h: Hit) => mappings[h.key] != null;
+  const targetLabel = (h: Hit) => KEY_LABELS[mappings[h.key] as number] ?? '';
+
+  function badgeAt(h: Hit): { x: number; y: number } {
+    if (h.bx != null && h.by != null) return { x: h.bx, y: h.by };
+    if (h.kind === 'circle')
+      return { x: h.cx!, y: h.side === 'above' ? h.cy! - h.r! - 11 : h.cy! + h.r! + 11 };
+    const cx = h.x! + h.w! / 2;
+    return { x: cx, y: h.side === 'above' ? h.y! - 11 : h.y! + h.h! + 11 };
+  }
+  const dotX = (h: Hit) => (h.kind === 'circle' ? h.cx! + h.r! * 0.66 : h.x! + h.w! - 6);
+  const dotY = (h: Hit) => (h.kind === 'circle' ? h.cy! - h.r! * 0.66 : h.y! + 6);
+  const transform = (h: Hit) => (h.rot ? `rotate(${h.rot[0]} ${h.rot[1]} ${h.rot[2]})` : undefined);
+  const aria = (h: Hit) =>
+    `${KEY_LABELS[h.key]}${isMapped(h) ? '，映射为 ' + targetLabel(h) : '，未映射'}`;
+
+  function onKey(ev: KeyboardEvent, key: ControllerKey) {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      onpick?.(key);
+    }
+  }
 
   const b = (name: string) => pad?.buttons.find(x => x.name === name)?.pressed ?? false;
   const lt = $derived(pad?.lt ?? 0);
@@ -204,6 +284,62 @@
     <text x="238" y="332" text-anchor="middle" class="tiny">Turbo</text>
     <rect x="257" y="322" width="26" height="12" rx="2" fill="none" stroke="#252830" stroke-width="1"/>
     <text x="270" y="332" text-anchor="middle" class="tiny">Fn</text>
+
+    <!-- ══ 映射模式：可点选命中区 + 选中环 + 目标气泡 ══ -->
+    {#if interactive}
+      <g class="imap">
+        {#each HIT as h (h.key)}
+          {@const sel = selected === h.key}
+          {@const mapped = isMapped(h)}
+          {@const ba = badgeAt(h)}
+          <g class="iz" class:mapped class:sel>
+            {#if h.kind === 'circle'}
+              {#if sel}<circle class="ring" cx={h.cx} cy={h.cy} r={(h.r ?? 0) + 4} />{/if}
+              <circle
+                class="hit"
+                cx={h.cx}
+                cy={h.cy}
+                r={h.r}
+                role="button"
+                tabindex="0"
+                aria-label={aria(h)}
+                onclick={() => onpick?.(h.key)}
+                onkeydown={(e) => onKey(e, h.key)}
+              ><title>{aria(h)}</title></circle>
+            {:else}
+              {#if sel}
+                <rect class="ring" x={(h.x ?? 0) - 3} y={(h.y ?? 0) - 3} width={(h.w ?? 0) + 6} height={(h.h ?? 0) + 6} rx="8" transform={transform(h)} />
+              {/if}
+              <rect
+                class="hit"
+                x={h.x}
+                y={h.y}
+                width={h.w}
+                height={h.h}
+                rx="6"
+                transform={transform(h)}
+                role="button"
+                tabindex="0"
+                aria-label={aria(h)}
+                onclick={() => onpick?.(h.key)}
+                onkeydown={(e) => onKey(e, h.key)}
+              ><title>{aria(h)}</title></rect>
+            {/if}
+
+            {#if mapped && h.compact}
+              <circle class="mdot" cx={dotX(h)} cy={dotY(h)} r="3.6" />
+            {:else if mapped}
+              {@const tl = targetLabel(h)}
+              {@const pw = Math.max(20, tl.length * 7 + 12)}
+              <g class="pill" transform="translate({ba.x} {ba.y})">
+                <rect x={-pw / 2} y="-8.5" width={pw} height="17" rx="8.5" />
+                <text x="0" y="4" text-anchor="middle">{tl}</text>
+              </g>
+            {/if}
+          </g>
+        {/each}
+      </g>
+    {/if}
   </svg>
 </div>
 
@@ -225,4 +361,61 @@
   .face { font-size: 11px; font-weight: 700; font-family: var(--mono, monospace); pointer-events: none; }
 
   .tiny { font-size: 6.5px; font-family: var(--mono, monospace); fill: #2e3240; pointer-events: none; }
+
+  /* —— 映射模式 —— */
+  .iz .hit {
+    fill: rgba(59, 130, 246, 0.04);
+    stroke: rgba(91, 157, 255, 0.32);
+    stroke-width: 1.2;
+    stroke-dasharray: 3 3;
+    cursor: pointer;
+    transition: fill 0.12s, stroke 0.12s;
+  }
+  .iz .hit:hover {
+    fill: rgba(59, 130, 246, 0.18);
+    stroke: var(--accent-2);
+    stroke-dasharray: none;
+  }
+  .iz .hit:focus-visible {
+    outline: none;
+    stroke: #fff;
+    stroke-dasharray: none;
+  }
+  .iz.mapped .hit {
+    fill: rgba(59, 130, 246, 0.16);
+    stroke: var(--accent);
+    stroke-dasharray: none;
+  }
+  .iz.sel .hit {
+    fill: rgba(59, 130, 246, 0.3);
+    stroke: #fff;
+    stroke-dasharray: none;
+  }
+  .ring {
+    fill: none;
+    stroke: var(--accent-2);
+    stroke-width: 2;
+    filter: drop-shadow(0 0 5px var(--accent-glow));
+    pointer-events: none;
+    animation: imap-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes imap-pulse {
+    50% { opacity: 0.4; }
+  }
+  .mdot {
+    fill: var(--accent-2);
+    filter: drop-shadow(0 0 4px var(--accent-glow));
+    pointer-events: none;
+  }
+  .pill { pointer-events: none; }
+  .pill rect {
+    fill: var(--accent);
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+  }
+  .pill text {
+    fill: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--mono, monospace);
+  }
 </style>
