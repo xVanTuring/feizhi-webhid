@@ -5,10 +5,11 @@ import {
   MotionMapType,
   bumpDataVersion,
   getDataVersion,
-  getKeyMap,
   getMotionMap,
-  setKeyMap,
+  readKeyMap,
   setMotionMap,
+  writeKeyMap,
+  type KeyMapping,
 } from './hid/config';
 
 /**
@@ -27,8 +28,8 @@ class MappingStore {
   dirty = $state(false);
   version = $state(0);
 
-  /** 各物理键 → 映射目标（null = 不映射/默认）。 */
-  mappings = $state<Record<number, number | null>>({});
+  /** 各物理键 → 映射形态（单键/连发/宏/键盘…）。 */
+  mappings = $state<Record<number, KeyMapping>>({});
   /** 当前在手柄图上选中、正在编辑映射的物理键（null = 未选）。 */
   selectedKey = $state<ControllerKey | null>(null);
   motionMode = $state<MotionMapType>(MotionMapType.Off);
@@ -42,8 +43,8 @@ class MappingStore {
   private refreshFromRaw() {
     const raw = this.rawConfig;
     if (!raw) return;
-    const next: Record<number, number | null> = {};
-    for (const k of MAPPABLE_KEYS) next[k] = getKeyMap(raw, k);
+    const next: Record<number, KeyMapping> = {};
+    for (const k of MAPPABLE_KEYS) next[k] = readKeyMap(raw, k);
     this.mappings = next;
     const m = getMotionMap(raw);
     this.motionMode = m.mode;
@@ -67,6 +68,11 @@ class MappingStore {
     this.selectedKey = this.selectedKey === key ? null : key;
   }
 
+  /** 在真实手柄上按下某键：直接选中（不切换），供「按键选择」用。 */
+  focusKey(key: ControllerKey) {
+    this.selectedKey = key;
+  }
+
   async read() {
     if (!controller.connected) {
       this.status = '未连接';
@@ -87,14 +93,19 @@ class MappingStore {
     }
   }
 
-  updateMap(from: ControllerKey, to: number | null) {
+  /** 设置某键的映射形态（单键/连发/清除…）。 */
+  setMapping(from: ControllerKey, m: KeyMapping) {
     const raw = this.rawConfig;
     if (!raw) return;
-    const t = to == null || to === ControllerKey.None ? null : to;
-    setKeyMap(raw, from, t);
+    writeKeyMap(raw, from, m);
     this.rawConfig = raw;
-    this.mappings = { ...this.mappings, [from]: t };
+    this.mappings = { ...this.mappings, [from]: m };
     this.dirty = true;
+  }
+
+  /** 清除某键映射（恢复默认）。 */
+  clearMapping(from: ControllerKey) {
+    this.setMapping(from, { kind: 'none' });
   }
 
   updateMotionMode(mode: MotionMapType) {

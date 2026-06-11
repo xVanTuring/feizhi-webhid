@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { DecodedPad } from '../hid/decode';
-  import { ControllerKey as K, KEY_LABELS } from '../hid/config';
+  import { ControllerKey as K, KEY_LABELS, type KeyMapping } from '../hid/config';
 
   let {
     pad = null,
@@ -12,8 +12,8 @@
     pad?: DecodedPad | null;
     /** 映射模式：按键可点选，显示映射状态。 */
     interactive?: boolean;
-    /** 物理键 → 映射目标（null = 未映射）。 */
-    mappings?: Record<number, number | null>;
+    /** 物理键 → 映射形态。 */
+    mappings?: Record<number, KeyMapping>;
     /** 当前选中的物理键。 */
     selected?: ControllerKey | null;
     onpick?: (key: ControllerKey) => void;
@@ -60,8 +60,19 @@
     { key: K.M3, kind: 'rect', x: 275, y: 368, w: 97, h: 36, side: 'above' },
   ];
 
-  const isMapped = (h: Hit) => mappings[h.key] != null;
-  const targetLabel = (h: Hit) => KEY_LABELS[mappings[h.key] as number] ?? '';
+  const isMapped = (h: Hit) => {
+    const m = mappings[h.key];
+    return m != null && m.kind !== 'none';
+  };
+  const isTurbo = (h: Hit) => mappings[h.key]?.kind === 'turbo';
+  function targetLabel(h: Hit): string {
+    const m = mappings[h.key];
+    if (!m) return '';
+    if (m.kind === 'key' || m.kind === 'turbo') return KEY_LABELS[m.target] ?? '';
+    if (m.kind === 'macro') return '宏';
+    if (m.kind === 'special') return 'KB';
+    return '';
+  }
 
   function badgeAt(h: Hit): { x: number; y: number } {
     if (h.bx != null && h.by != null) return { x: h.bx, y: h.by };
@@ -291,8 +302,9 @@
         {#each HIT as h (h.key)}
           {@const sel = selected === h.key}
           {@const mapped = isMapped(h)}
+          {@const turbo = isTurbo(h)}
           {@const ba = badgeAt(h)}
-          <g class="iz" class:mapped class:sel>
+          <g class="iz" class:mapped class:sel class:turbo>
             {#if h.kind === 'circle'}
               {#if sel}<circle class="ring" cx={h.cx} cy={h.cy} r={(h.r ?? 0) + 4} />{/if}
               <circle
@@ -330,8 +342,9 @@
               <circle class="mdot" cx={dotX(h)} cy={dotY(h)} r="3.6" />
             {:else if mapped}
               {@const tl = targetLabel(h)}
-              {@const pw = Math.max(20, tl.length * 7 + 12)}
-              <g class="pill" transform="translate({ba.x} {ba.y})">
+              {@const kind = mappings[h.key]?.kind}
+              {@const pw = Math.max(20, tl.length * 8 + 12)}
+              <g class="pill" class:turbo class:opaque={kind === 'macro' || kind === 'special'} transform="translate({ba.x} {ba.y})">
                 <rect x={-pw / 2} y="-8.5" width={pw} height="17" rx="8.5" />
                 <text x="0" y="4" text-anchor="middle">{tl}</text>
               </g>
@@ -386,6 +399,10 @@
     stroke: var(--accent);
     stroke-dasharray: none;
   }
+  .iz.turbo .hit {
+    fill: rgba(139, 92, 246, 0.18);
+    stroke: var(--violet);
+  }
   .iz.sel .hit {
     fill: rgba(59, 130, 246, 0.3);
     stroke: #fff;
@@ -411,6 +428,12 @@
   .pill rect {
     fill: var(--accent);
     filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+  }
+  .pill.turbo rect {
+    fill: var(--violet);
+  }
+  .pill.opaque rect {
+    fill: #4b5570;
   }
   .pill text {
     fill: #fff;

@@ -4,7 +4,7 @@
   import { mapping } from '../mapping.svelte';
   import { ui } from '../ui.svelte';
   import { decodePad, pickGamepadReport } from '../hid/decode';
-  import { ControllerKey, KEY_LABELS } from '../hid/config';
+  import { ControllerKey, KEY_BY_LABEL, KEY_LABELS } from '../hid/config';
   import ControllerView from './ControllerView.svelte';
 
   // 输入源：原始映射开启 → NewXInput(全物理键，独占)；否则 → Gamepad API(基础)。
@@ -16,6 +16,27 @@
   const mapMode = $derived(ui.tab === 'buttons' && mapping.loaded);
   const selLabel = $derived(mapping.selectedKey != null ? KEY_LABELS[mapping.selectedKey] : null);
   const pick = (key: ControllerKey) => mapping.selectKey(key);
+
+  // 「按下实体键选择」：映射模式下，监听实时输入，物理键按下的上升沿 → 选中该键。
+  // 需开启原始映射才能读到 M1-M6 等全键；基础模式只能选到标准键。
+  let prevPressed = new Set<string>();
+  $effect(() => {
+    if (!mapMode) {
+      prevPressed = new Set();
+      return;
+    }
+    const names = new Set(pressed.map((x) => x.name));
+    for (const name of names) {
+      if (!prevPressed.has(name)) {
+        const key = KEY_BY_LABEL[name];
+        if (key != null) {
+          mapping.focusKey(key);
+          break; // 一次只选一个
+        }
+      }
+    }
+    prevPressed = names;
+  });
 
   const formatBadge = $derived.by(() => {
     if (!controller.connected) return null;
@@ -81,7 +102,7 @@
       {#if selLabel}
         <span class="map-hint sel">已选中 <b>{selLabel}</b> — 在下方设置映射目标</span>
       {:else}
-        <span class="map-hint">点击手柄上的按键来设置映射 · 已映射的按键会高亮并显示目标</span>
+        <span class="map-hint">点击手柄图上的按键，或<b>直接在手柄上按下该键</b>来选择（需开启原始映射读全键）</span>
       {/if}
     {:else if pressed.length}
       {#each pressed as x (x.name)}

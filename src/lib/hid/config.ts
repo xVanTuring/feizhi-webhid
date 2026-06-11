@@ -62,6 +62,13 @@ export enum MotionEnableType {
   Press = 1,
 }
 
+/** 连发(Continuous)触发方式。来源：Flydigi.SharedResources KeyMapTypeContinuousEnableType。 */
+export enum ContinuousEnable {
+  Close = 0,
+  Press = 1, // 按住期间连发
+  Click = 2, // 单击切换连发开/关
+}
+
 export enum MotionUseMode {
   Fps = 0,
   Racer = 1,
@@ -98,6 +105,13 @@ export const KEY_LABELS: Record<number, string> = {
   [ControllerKey.Back]: 'Back',
   [ControllerKey.None]: '不映射',
 };
+
+/** label → ControllerKey（KEY_LABELS 反转），供「按下实体键选择」用。 */
+export const KEY_BY_LABEL: Record<string, ControllerKey> = Object.fromEntries(
+  Object.entries(KEY_LABELS)
+    .filter(([k]) => Number(k) !== ControllerKey.None)
+    .map(([k, label]) => [label, Number(k) as ControllerKey]),
+);
 
 export const MAPPABLE_KEYS = [
   ControllerKey.Up,
@@ -229,29 +243,66 @@ const KEY_ENTRY_SIZE = 3;
 const MOTION_OFFSET = 137;
 const MOTION_EXTRA_OFFSET = 830;
 
-/** 设置单个按键的映射。toKey = null 表示恢复默认（不映射/自身）。 */
-export function setKeyMap(raw: Uint8Array, fromKey: ControllerKey, toKey: ControllerKey | null): void {
+/**
+ * 单个按键映射的语义形态。3 字节布局 [b0, b1, b2] 解析规则完全照搬反编译
+ * ParseArrayToKeyConfig / ParseKeyConfigToArray（Flydigi.ControllerSdk.cs:4493-4573）：
+ *   - b0 == 32          → 宏(Macro)：步骤存别处(protobuf ~offset 230)，本工具仅识别
+ *   - b2 > 0            → 连发(Continuous)：b0=目标键, b1=触发方式, b2=频率
+ *   - b0 == 0xFF        → 不映射/默认
+ *   - b0 == 0xFE / >31  → 键盘/多功能：键值存 protobuf 层，本工具仅识别
+ *   - 否则              → 单键(Key)：b0=目标键
+ */
+export type KeyMapping =
+  | { kind: 'none' }
+  | { kind: 'key'; target: ControllerKey }
+  | { kind: 'turbo'; target: ControllerKey; enable: ContinuousEnable; freq: number }
+  | { kind: 'macro' }
+  | { kind: 'special' }; // 键盘 / 多功能（raw 字节仅有标记位）
+
+/** 读取单个按键的映射形态。 */
+export function readKeyMap(raw: Uint8Array, fromKey: ControllerKey): KeyMapping {
   const off = KEY_TABLE_OFFSET + fromKey * KEY_ENTRY_SIZE;
-  if (toKey === null || toKey === fromKey) {
-    raw[off] = 0xff;
-    raw[off + 1] = 0;
-    raw[off + 2] = 0;
-  } else {
-    raw[off] = toKey & 0xff;
-    raw[off + 1] = 0;
-    raw[off + 2] = 0;
+  const b0 = raw[off];
+  const b1 = raw[off + 1];
+  const b2 = raw[off + 2];
+  if (b0 === 32) return { kind: 'macro' };
+  if (b2 > 0 && b0 <= 31) {
+    return { kind: 'turbo', target: b0 as ControllerKey, enable: (b1 <= 2 ? b1 : 0) as ContinuousEnable, freq: b2 };
   }
+  if (b0 === 0xff) return { kind: 'none' };
+  if (b0 > 31) return { kind: 'special' }; // 0xFE 键盘 / 多功能 / 其它高值
+  if (b0 === fromKey) return { kind: 'none' }; // 映射到自身 = 默认
+  return { kind: 'key', target: b0 as ControllerKey };
 }
 
-/** 读取当前按键映射目标。返回 null 表示未映射/默认。 */
-export function getKeyMap(raw: Uint8Array, fromKey: ControllerKey): ControllerKey | null {
+/** 写入单个按键的映射形态（与 readKeyMap 对称）。 */
+export function writeKeyMap(raw: Uint8Array, fromKey: ControllerKey, m: KeyMapping): void {
   const off = KEY_TABLE_OFFSET + fromKey * KEY_ENTRY_SIZE;
-  const v = raw[off];
-  if (v === 0xff) return null;
-  if (v === 0xfe) return null; // Keyboard
-  if (v === 32) return null; // Macro
-  if (v > 31) return null; // 保留/越界
-  return v;
+  let b0 = 0xff;
+  let b1 = 0;
+  let b2 = 0;
+  switch (m.kind) {
+    case 'key':
+      b0 = m.target === fromKey ? 0xff : m.target & 0xff;
+      break;
+    case 'turbo':
+      b0 = m.target & 0xff;
+      b1 = m.enable & 0xff;
+      b2 = Math.max(1, Math.min(255, m.freq)) & 0xff;
+      break;
+    case 'macro':
+      b0 = 32;
+      break;
+    case 'special':
+      b0 = 0xfe;
+      break;
+    case 'none':
+    default:
+      b0 = 0xff;
+  }
+  raw[off] = b0;
+  raw[off + 1] = b1;
+  raw[off + 2] = b2;
 }
 
 export interface MotionOptions {
