@@ -1,4 +1,5 @@
 import { FLYDIGI_VID } from './hid/constants';
+import type { DecodedPad } from './hid/decode';
 
 // 标准映射（Standard Gamepad）按钮索引 → 名称，用于解码视图。
 // 八爪鱼5 在 XInput 模式下走标准映射；非标准映射时退化为按序号展示。
@@ -59,6 +60,29 @@ class GamepadReader {
     return `B${i}`;
   }
 
+  /**
+   * 解码成 DecodedPad（基础模式：映射后的标准手柄）。
+   * 标准映射下 LT/RT 是模拟按钮(索引 6/7 的 value)，摇杆在 axes[0..3]，Y 已是“下为正”。
+   * 不含飞智专属键 M1-M6（标准手柄没有）。
+   */
+  get pad(): DecodedPad | null {
+    if (!this.connected) return null;
+    const pressed = (i: number) => this.buttons[i]?.pressed ?? false;
+    return {
+      reportId: -1,
+      protocol: 'gamepad',
+      offset: 0,
+      hasXInputHeader: false,
+      buttons: STANDARD_BUTTON_NAMES.map((name, i) => ({ name, pressed: pressed(i) })),
+      lt: this.buttons[6]?.value ?? 0,
+      rt: this.buttons[7]?.value ?? 0,
+      lx: this.axes[0] ?? 0,
+      ly: this.axes[1] ?? 0,
+      rx: this.axes[2] ?? 0,
+      ry: this.axes[3] ?? 0,
+    };
+  }
+
   private adopt(gp: Gamepad): void {
     // 优先认飞智设备；否则认第一个出现的。
     if (this.index !== null && !gp.id.toLowerCase().includes(vidHex)) return;
@@ -80,11 +104,21 @@ class GamepadReader {
   private loop(): void {
     const tick = () => {
       if (!this.running) return;
+      // 未锁定手柄时主动扫描：原始映射独占释放后，系统常不补发 gamepadconnected，
+      // 死等事件会一直无响应；这里每帧轮询，手柄一旦重新出现就自动接管。
+      if (this.index === null) {
+        const gps = navigator.getGamepads();
+        const pick = gps.find((g) => g?.id.toLowerCase().includes(vidHex)) ?? gps.find((g) => g);
+        if (pick) this.adopt(pick);
+      }
       if (this.index !== null) {
         const gp = navigator.getGamepads()[this.index];
         if (gp) {
           this.axes = Array.from(gp.axes);
           this.buttons = gp.buttons.map((b) => ({ pressed: b.pressed, value: b.value }));
+        } else {
+          // 手柄消失（被独占/拔出），重置以便下一帧重新扫描恢复。
+          this.reset();
         }
       }
       this.rafId = requestAnimationFrame(tick);

@@ -6,6 +6,14 @@ import {
 } from './hid/constants';
 import { buildTriggerFrame } from './hid/frame';
 import { buildGripFrame, unbindParams, type GripBindParams } from './hid/gripbind';
+import {
+  CMD_ACQUIRE,
+  CMD_ENABLE_RAWDATA,
+  OPERATOR_FRAME,
+  buildAcquireFrame,
+  buildEnableRawDataFrame,
+  buildHeartbeatFrame,
+} from './hid/input';
 import { TriggerMode, TriggerSide } from './hid/triggers';
 import { sleep, toHex } from './hid/util';
 import {
@@ -14,7 +22,6 @@ import {
   CMD_SAVE,
   CMD_WRITE_PACK,
   CMD_WRITE_START,
-  PKG_COUNT,
   PKG_SIZE,
   buildApplyFrame,
   buildReadMappingFrame,
@@ -67,6 +74,9 @@ class FlydigiController {
   reportId = $state(DEFAULT_REPORT_ID);
   reportLen = $state(DEFAULT_REPORT_LEN);
 
+  /** 是否已开启原始映射（NewXInput 操作数据，独占）。 */
+  rawInputActive = $state(false);
+
   logs = $state<LogEntry[]>([]);
   /** 按 reportId 排序的最新输入报文快照。 */
   reports = $state<ReportSnapshot[]>([]);
@@ -80,6 +90,9 @@ class FlydigiController {
   private dirty = false;
   private rafId = 0;
   private logSeq = 0;
+  /** 原始映射的心跳保活定时器。 */
+  private hbTimer = 0;
+  private readonly acquireTag = 'feizhi-webhid';
   private readonly onInput = (e: HIDInputReportEvent) => this.handleInput(e);
   private readonly onDisconnect = (e: HIDConnectionEvent) => {
     if (this.devices.includes(e.device)) this.teardown('设备已拔出');
@@ -190,25 +203,114 @@ class FlydigiController {
     await this.bindGrip(unbindParams(p));
   }
 
+  // ===== 原始映射（NewXInput 操作数据：物理按键，不受映射影响） =====
+
+  /**
+   * 开启原始映射：Acquire 接管 + Enable 操作数据 + 周期心跳保活。
+   * 之后设备在命令接口上报 `5A A5 EF` 帧（含 M1-M6/C/Z 等飞智物理键）。
+   * 复刻飞智「手柄测试·原始」流程。注意 Acquire 为独占，开启期间系统/游戏可能
+   * 收不到该手柄输入；关闭或断开会自动释放。
+   */
+  async enableRawInput(): Promise<void> {
+    if (!this.device?.opened) {
+      this.log('warn', '未连接，无法开启原始映射');
+      return;
+    }
+    if (this.rawInputActive) return;
+    const dev = this.device;
+    try {
+      // 串行复刻飞智软件/Python 已验证的时序：Acquire →（等 ACK / 50ms）→ Enable。
+      // 连发会让设备来不及处理 Acquire 就收到 Enable，导致不上报 0xEF。
+      const ackA = this.waitForAck(CMD_ACQUIRE, (b) => isAck(b, CMD_ACQUIRE), 1500);
+      await dev.sendReport(this.reportId, buildAcquireFrame(true, this.acquireTag, this.reportLen));
+      try {
+        await ackA;
+        this.log('info', 'Acquire ACK ✓');
+      } catch {
+        this.log('warn', 'Acquire 未收到 ACK（仍继续 Enable）');
+      }
+      await sleep(50);
+      const ackE = this.waitForAck(CMD_ENABLE_RAWDATA, (b) => isAck(b, CMD_ENABLE_RAWDATA), 1500);
+      await dev.sendReport(
+        this.reportId,
+        buildEnableRawDataFrame({ controllerData: true, rawData: true }, this.reportLen),
+      );
+      try {
+        await ackE;
+        this.log('info', 'Enable ACK ✓');
+      } catch {
+        this.log('warn', 'Enable 未收到 ACK');
+      }
+      this.hbTimer = window.setInterval(() => {
+        void this.device
+          ?.sendReport(this.reportId, buildHeartbeatFrame(this.reportLen))
+          .catch(() => {});
+      }, 500);
+      this.rawInputActive = true;
+      this.log('info', '✓ 已开启原始映射（独占）—— 可读到 M1-M6 等飞智键');
+    } catch (err) {
+      this.log('error', '开启原始映射失败: ' + errMsg(err));
+    }
+  }
+
+  /** 关闭原始映射：停心跳 + 关数据 + 释放接管。 */
+  async disableRawInput(): Promise<void> {
+    if (this.hbTimer) {
+      clearInterval(this.hbTimer);
+      this.hbTimer = 0;
+    }
+    if (!this.rawInputActive) return;
+    this.rawInputActive = false;
+    if (this.device?.opened) {
+      try {
+        await this.device.sendReport(
+          this.reportId,
+          // controllerData=true 恢复系统 XInput 输出（关键！之前误设 false 把系统手柄关了）；
+          // rawData=false 关私有 0xEF 上报。
+          buildEnableRawDataFrame({ controllerData: true, rawData: false }, this.reportLen),
+        );
+        await sleep(50);
+        await this.device.sendReport(
+          this.reportId,
+          buildAcquireFrame(false, this.acquireTag, this.reportLen),
+        );
+      } catch {
+        /* 释放失败忽略（设备可能已断） */
+      }
+    }
+    this.log('info', '已关闭原始映射（已释放接管，手柄交还系统）');
+  }
+
   // ===== 映射配置（按键映射 + 陀螺仪开关） =====
 
-  /** 读取指定 cfgId 的完整映射配置原始字节（84 * 20 = 1680 bytes）。 */
+  /**
+   * 读取指定 cfgId 的完整映射配置原始字节。
+   * total（分包数）由首个 ACK 的 bytes[3] 动态决定 —— 不能写死：实测 APEX5 固件
+   * 返回 42 包(840B)，并非 V31 名义的 84 包。早期写死 84 会让每包都被判 total 不符
+   * 而拒收，Promise 永不 resolve → “等待 0xA3 ACK 超时”。
+   */
   async readMappingConfig(cfgId: number): Promise<Uint8Array> {
     if (!this.device?.opened) throw new Error('未连接');
     const dev = this.device;
 
-    const raw = new Uint8Array(PKG_COUNT * PKG_SIZE);
-    let received = 0;
+    let raw: Uint8Array | null = null;
+    let total = 0;
+    const seen = new Set<number>();
     // 先挂监听再发请求：首包 ACK 可能早于 sendReport 返回，挂晚了会丢包。
     const done = this.waitForAck(
       CMD_READ_MAPPING,
       (bytes) => {
         const info = extractPackFromAck(bytes);
         if (!info) return false;
-        if (info.total !== PKG_COUNT) return false;
-        raw.set(info.payload, info.num * PKG_SIZE);
-        received++;
-        if (info.num + 1 >= info.total) return raw;
+        if (raw === null) {
+          total = info.total;
+          raw = new Uint8Array(total * PKG_SIZE).fill(0xff);
+        }
+        if (info.num < total && !seen.has(info.num)) {
+          raw.set(info.payload, info.num * PKG_SIZE);
+          seen.add(info.num);
+        }
+        if (seen.size >= total) return raw;
         return false;
       },
       6000,
@@ -216,9 +318,9 @@ class FlydigiController {
     const frame = buildReadMappingFrame(cfgId, this.reportLen);
     await dev.sendReport(this.reportId, frame);
     this.log('tx', `[${hexId(this.reportId)}] ReadMapping cfg=${cfgId}`);
-    const result = await done;
-    this.log('rx', `ReadMapping 完成，共 ${received}/${PKG_COUNT} 包`);
-    return result as Uint8Array;
+    const result = (await done) as Uint8Array;
+    this.log('rx', `ReadMapping 完成，共 ${seen.size}/${total} 包(${result.length}B)`);
+    return result;
   }
 
   /**
@@ -228,25 +330,27 @@ class FlydigiController {
    */
   async writeAllMappingConfig(cfgId: number, raw: Uint8Array): Promise<void> {
     if (!this.device?.opened) throw new Error('未连接');
-    if (raw.length !== PKG_COUNT * PKG_SIZE) throw new Error('配置长度错误');
+    if (raw.length === 0 || raw.length % PKG_SIZE !== 0) throw new Error('配置长度错误');
     const dev = this.device;
+    // 包数 = 读回时设备实际给的包数（840B→42 包），与读取对称，不写死。
+    const pkgCount = raw.length / PKG_SIZE;
 
     // 写头(A4)：先挂监听再发。
     const startAck = this.waitForAck(CMD_WRITE_START, (b) => isAck(b, CMD_WRITE_START), 2000);
-    const startFrame = buildWriteStartFrame(cfgId, 0, PKG_COUNT, this.reportLen);
+    const startFrame = buildWriteStartFrame(cfgId, 0, pkgCount, this.reportLen);
     await dev.sendReport(this.reportId, startFrame);
-    this.log('tx', `[${hexId(this.reportId)}] WriteStart cfg=${cfgId} pkts=${PKG_COUNT}`);
+    this.log('tx', `[${hexId(this.reportId)}] WriteStart cfg=${cfgId} pkts=${pkgCount}`);
     await startAck;
 
-    // 84 个分包(A5)：发一包→等本包 ACK→发下一包。
-    for (let i = 0; i < PKG_COUNT; i++) {
+    // 逐分包(A5)：发一包→等本包 ACK→发下一包。
+    for (let i = 0; i < pkgCount; i++) {
       const pack = raw.slice(i * PKG_SIZE, (i + 1) * PKG_SIZE);
       const packFrame = buildWritePackFrame(i, pack, this.reportLen);
       const packAck = this.waitForAck(CMD_WRITE_PACK, (b) => isAck(b, CMD_WRITE_PACK), 1500);
       await dev.sendReport(this.reportId, packFrame);
       await packAck;
     }
-    this.log('tx', `[${hexId(this.reportId)}] WritePack ×${PKG_COUNT} 完成`);
+    this.log('tx', `[${hexId(this.reportId)}] WritePack ×${pkgCount} 完成`);
   }
 
   /** 应用配置（切档）。 */
@@ -303,8 +407,18 @@ class FlydigiController {
     timeoutMs = 2000,
   ): Promise<NonNullable<T>> {
     return new Promise((resolve, reject) => {
+      // —— 诊断：记录等待窗口内收到的每一种输入报文，超时时转储 ——
+      const seen = new Map<number, { count: number; sample: string; cmdFrame: boolean }>();
       const onReport = (e: HIDInputReportEvent) => {
         const bytes = new Uint8Array(e.data.buffer);
+        const rec = seen.get(e.reportId);
+        if (rec) rec.count++;
+        else
+          seen.set(e.reportId, {
+            count: 1,
+            sample: toHex(bytes.slice(0, 8)),
+            cmdFrame: bytes[0] === 0x5a && bytes[1] === 0xa5,
+          });
         if (bytes.length < 5 || bytes[0] !== 0x5a || bytes[1] !== 0xa5 || bytes[2] !== expectedCmd) {
           return;
         }
@@ -316,7 +430,18 @@ class FlydigiController {
       };
       let timer = setTimeout(() => {
         cleanup();
-        reject(new Error(`等待 0x${expectedCmd.toString(16).toUpperCase()} ACK 超时`));
+        const tag = `0x${expectedCmd.toString(16).toUpperCase()}`;
+        if (seen.size === 0) {
+          this.log('warn', `[diag] 等待 ${tag} 期间未收到任何输入报文（命令接口可能根本不上报输入，或设备未应答）`);
+        } else {
+          for (const [id, r] of seen) {
+            this.log(
+              'warn',
+              `[diag] rid=0x${hexId(id)} ×${r.count} 首8字节=${r.sample}${r.cmdFrame ? ' ←5A A5 命令帧' : ''}`,
+            );
+          }
+        }
+        reject(new Error(`等待 ${tag} ACK 超时`));
       }, timeoutMs);
       const cleanup = () => {
         clearTimeout(timer);
@@ -363,6 +488,11 @@ class FlydigiController {
   }
 
   private async teardown(reason: string): Promise<void> {
+    if (this.hbTimer) {
+      clearInterval(this.hbTimer);
+      this.hbTimer = 0;
+    }
+    this.rawInputActive = false;
     for (const dev of this.devices) {
       dev.removeEventListener('inputreport', this.onInput);
       try {
@@ -406,6 +536,10 @@ class FlydigiController {
 
   private handleInput(e: HIDInputReportEvent): void {
     const bytes = Array.from(new Uint8Array(e.data.buffer));
+    // 命令 ACK 帧（5A A5 cmd，cmd≠EF 操作数据）是命令响应而非输入报文。
+    // 不让它进输入快照，否则会覆盖同 reportId(0x04) 上的 0xEF 输入帧。
+    // 命令 ACK 由 waitForAck 的独立监听处理，不依赖这里。
+    if (bytes[0] === 0x5a && bytes[1] === 0xa5 && bytes[2] !== OPERATOR_FRAME) return;
     const prev = this.rawBuf.get(e.reportId);
     const prevBytes = prev?.bytes;
     const changed = bytes.map((b, i) => (prevBytes ? b !== prevBytes[i] : false));
