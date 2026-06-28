@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { controller } from './lib/controller.svelte';
   import { gamepad } from './lib/gamepad.svelte';
+  import { mapping } from './lib/mapping.svelte';
   import { ui, TAB_IDS, type TabId } from './lib/ui.svelte';
 
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -29,6 +30,21 @@
     if (location.hash !== target) history.replaceState(null, '', target);
   });
 
+  // 连接成功（首次连接 / 刷新后静默重连）即自动读取一次当前档位映射配置，
+  // 让按键/体感页直接反映手柄真实配置 —— 只读不写，不改手柄。
+  // 扳机是只发不收，不在此列；这里仅对可回读的 A3 映射配置生效。
+  let autoReadDone = false;
+  $effect(() => {
+    if (!controller.connected) {
+      autoReadDone = false; // 断开后允许下次重连再自动读一次
+      return;
+    }
+    if (!autoReadDone && !mapping.loaded && !mapping.busy) {
+      autoReadDone = true; // 只读一次；失败也不重试，留给用户手动「读取」
+      void mapping.read();
+    }
+  });
+
   onMount(() => {
     gamepad.start();
     controller.tryRestore();
@@ -51,11 +67,11 @@
       <TabBar />
 
       <div class="content">
-        <div class:hidden={ui.tab !== 'trigger'}><TriggerPanel /></div>
-        <div class:hidden={ui.tab !== 'vibration'}><VibrationPanel /></div>
-        <div class:hidden={ui.tab !== 'buttons'}><KeyMapPanel /></div>
-        <div class:hidden={ui.tab !== 'motion'}><MotionPanel /></div>
-        <div class:hidden={ui.tab !== 'telemetry'}><TelemetryPanel /></div>
+        <div class="pane" class:hidden={ui.tab !== 'trigger'}><TriggerPanel /></div>
+        <div class="pane" class:hidden={ui.tab !== 'vibration'}><VibrationPanel /></div>
+        <div class="pane" class:hidden={ui.tab !== 'buttons'}><KeyMapPanel /></div>
+        <div class="pane" class:hidden={ui.tab !== 'motion'}><MotionPanel /></div>
+        <div class="pane" class:hidden={ui.tab !== 'telemetry'}><TelemetryPanel /></div>
       </div>
 
       {#if ui.devMode}
@@ -92,6 +108,24 @@
   }
   .hidden {
     display: none;
+  }
+  /* 切换标签时，可见面板从 display:none 恢复显示会重放此进场动画。 */
+  .content > .pane:not(.hidden) {
+    animation: pane-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  @keyframes pane-in {
+    from {
+      opacity: 0;
+      transform: translateY(7px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  /* 面板自身进场交给 .pane 统一处理，避免与 Panel 的 fade-up 叠加成双重位移。 */
+  .content > .pane :global(.panel) {
+    animation: none;
   }
 
   @media (max-width: 900px) {

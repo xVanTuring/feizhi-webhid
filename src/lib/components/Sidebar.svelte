@@ -59,8 +59,8 @@
         {#if controller.connected}
           <button class="btn btn-ghost full" onclick={() => controller.disconnect()}>断开连接</button>
         {:else}
-          <button class="btn btn-primary full" disabled={!controller.supported} onclick={() => controller.connect()}>
-            连接手柄
+          <button class="btn btn-primary full" disabled={!controller.supported || controller.connecting} onclick={() => controller.connect()}>
+            {controller.connecting ? '连接中…' : '连接手柄'}
           </button>
         {/if}
       </div>

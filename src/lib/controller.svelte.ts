@@ -65,6 +65,8 @@ class FlydigiController {
   readonly supported = 'hid' in navigator;
 
   connected = $state(false);
+  /** 正在打开/接管设备（弹窗选完到 attachAll 结束）。供按钮显示「连接中…」。 */
+  connecting = $state(false);
   productName = $state('');
   /** 设备 collections / 输出报文概览，连接后填充。 */
   deviceInfo = $state('');
@@ -121,9 +123,12 @@ class FlydigiController {
         this.log('info', '未选择设备');
         return;
       }
+      this.connecting = true;
       await this.attachAll(devices);
     } catch (err) {
       this.log('error', '连接失败: ' + errMsg(err));
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -133,11 +138,14 @@ class FlydigiController {
     try {
       const granted = (await navigator.hid.getDevices()).filter((d) => d.vendorId === FLYDIGI_VID);
       if (granted.length) {
+        this.connecting = true;
         await this.attachAll(granted);
         this.log('info', '已自动恢复上次授权的设备');
       }
     } catch {
       /* 静默：恢复失败不影响首次连接 */
+    } finally {
+      this.connecting = false;
     }
   }
 
@@ -371,27 +379,6 @@ class FlydigiController {
     await this.device.sendReport(this.reportId, frame);
     this.log('tx', `[${hexId(this.reportId)}] Save version=${version}`);
     await ack;
-  }
-
-  /**
-   * 一键读取→修改→写入→保存→应用。
-   * 顺序复刻原版：先 Save 落 flash，再 Apply 切档（原版 SaveSwitch 把二者合并成
-   * 一条命令，语义即“先持久化再激活”），避免 apply-before-save 时固件从旧 flash 重载。
-   */
-  async commitMappingConfig(
-    cfgId: number,
-    modify: (raw: Uint8Array) => void,
-  ): Promise<void> {
-    const raw = await this.readMappingConfig(cfgId);
-    modify(raw);
-    // 版本号 +1，保证 != 当前，否则固件可能拒写
-    const nextVersion = (raw[225] | (raw[226] << 8)) + 1;
-    raw[225] = nextVersion & 0xff;
-    raw[226] = (nextVersion >> 8) & 0xff;
-    await this.writeAllMappingConfig(cfgId, raw);
-    await this.saveMappingConfig(nextVersion);
-    await this.applyMappingConfig(cfgId);
-    this.log('info', '配置已写入并保存');
   }
 
   // —— 内部实现 ——

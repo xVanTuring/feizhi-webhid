@@ -73,27 +73,44 @@
     {/if}
   </div>
 
-  <div class="stage" class:mapping={mapMode}>
-    <ControllerView
-      {pad}
-      interactive={mapMode}
-      mappings={mapMode ? mapping.mappings : {}}
-      selected={mapMode ? mapping.selectedKey : null}
-      onpick={pick}
-    />
-    {#if !mapMode}
-      {#if !controller.connected}
-        <div class="overlay">
-          <div class="ov-icon">🎮</div>
-          <div class="ov-text">连接手柄后，按键 / 摇杆 / 扳机将在此实时点亮</div>
-        </div>
-      {:else if !pad}
+  <div class="stage" class:mapping={mapMode} class:idle={!controller.connected}>
+    {#if controller.connected}
+      <ControllerView
+        {pad}
+        interactive={mapMode}
+        mappings={mapMode ? mapping.mappings : {}}
+        selected={mapMode ? mapping.selectedKey : null}
+        onpick={pick}
+      />
+      {#if !mapMode && !pad}
         <div class="overlay subtle">
           <div class="ov-text">
             基础模式未识别此手柄（macOS Chrome 常见）。点上方<b>「开启原始映射」</b>读取全部物理键（含 M1-M6）。
           </div>
         </div>
       {/if}
+    {:else}
+      <!-- 未连接：不画静态手柄（无实时数据，画出来像卡死），直接给干净的连接引导卡。 -->
+      <div class="onboard">
+        <div class="ov-icon">🎮</div>
+        <div class="ov-title">连接你的八爪鱼5</div>
+        {#if controller.supported}
+          <button class="btn btn-primary ov-cta" disabled={controller.connecting} onclick={() => controller.connect()}>
+            {#if controller.connecting}
+              <span class="spin"></span> 连接中…
+            {:else}
+              连接手柄
+            {/if}
+          </button>
+          <ul class="ov-reqs">
+            <li>Chrome / Edge 浏览器</li>
+            <li>手柄切到 <b>NewXInput / 增强模式</b></li>
+            <li>关闭飞智空间站（避免抢占设备）</li>
+          </ul>
+        {:else}
+          <div class="ov-text">当前浏览器不支持 WebHID — 请用 <b>Chrome / Edge</b> 打开本页。</div>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -105,8 +122,8 @@
         <span class="map-hint">点击手柄图上的按键，或<b>直接在手柄上按下该键</b>来选择（需开启原始映射读全键）</span>
       {/if}
     {:else if pressed.length}
-      {#each pressed as x (x.name)}
-        <span class="chip">{x.name}</span>
+      {#each pressed as x, i (x.name)}
+        <span class="chip" style="animation-delay: {Math.min(i, 10) * 22}ms">{x.name}</span>
       {/each}
     {:else if controller.connected && pad}
       <span class="keys-empty">等待按键…</span>
@@ -257,6 +274,99 @@
     color: var(--accent-2);
   }
 
+  /* —— 未连接引导态（不画静态手柄，直接干净卡片） —— */
+  .stage.idle {
+    padding: 30px 0 26px;
+  }
+  .onboard {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+  }
+  .onboard .ov-icon {
+    font-size: 40px;
+    opacity: 1;
+    filter: none;
+    animation: float 3.2s ease-in-out infinite;
+  }
+  @keyframes float {
+    50% {
+      transform: translateY(-5px);
+    }
+  }
+  .ov-title {
+    font-family: var(--display);
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.3px;
+  }
+  .ov-cta {
+    padding: 11px 26px;
+    font-size: 14px;
+    animation: cta-glow 2.4s ease-in-out infinite;
+  }
+  @keyframes cta-glow {
+    0%,
+    100% {
+      box-shadow: 0 2px 14px rgba(59, 130, 246, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    }
+    50% {
+      box-shadow: 0 4px 24px rgba(59, 130, 246, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    }
+  }
+  .spin {
+    display: inline-block;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #fff;
+    animation: spin 0.7s linear infinite;
+    vertical-align: -1px;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  .ov-reqs {
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+  }
+  .ov-reqs li {
+    font-size: 12px;
+    color: var(--muted-2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ov-reqs li::before {
+    content: "";
+    width: 14px;
+    height: 14px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-line);
+    /* 蓝色对勾 */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b9dff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 6'/%3E%3C/svg%3E");
+    background-size: 9px;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .ov-reqs b {
+    color: var(--accent-2);
+    font-weight: 600;
+  }
+
   .keys {
     position: relative;
     display: flex;
@@ -275,7 +385,7 @@
     background: linear-gradient(180deg, var(--accent-2), var(--accent));
     color: #fff;
     box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
-    animation: fade-up 0.12s ease;
+    animation: fade-up 0.18s ease both;
   }
   .keys-empty {
     font-size: 11.5px;

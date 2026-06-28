@@ -109,6 +109,15 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/* 键盘可达性：鼠标点击不显示，Tab 聚焦时给清晰焦点环。
+   作用于所有原生按钮（含 .btn / .tab / .slot / 自定义 role=switch|tab 按钮）与链接。
+   表单控件(select/input)已有各自的 :focus 高亮，这里不重复。 */
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}
+
 select,
 input[type="number"],
 input[type="text"] {
@@ -315,5 +324,18 @@ a:hover {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* 尊重系统「减弱动态效果」：关掉装饰性无限动画（脉冲点 / 选中环 / 录制闪烁 /
+   入场上滑），保留瞬时过渡的功能反馈。前庭敏感用户与省电场景更友好。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

@@ -9,11 +9,45 @@
   import Slider from '../../ui/Slider.svelte';
   import Switch from '../../ui/Switch.svelte';
 
-  let side = $state<TriggerSide>(TriggerSide.Left);
-  let mode = $state<TriggerMode>(TriggerMode.Race);
-  let match = $state(true);
-  let live = $state(true);
-  let values = $state<Record<string, number>>(defaultValues(TriggerMode.Race));
+  // —— 面板设置持久化：刷新后保留上次选择（侧/模式/参数/匹配/实时），不再重置回 Race ——
+  const STORE_KEY = 'feizhi.trigger';
+  type SavedTrigger = {
+    side: TriggerSide;
+    mode: TriggerMode;
+    match: boolean;
+    live: boolean;
+    values: Record<string, number>;
+  };
+  function loadSaved(): SavedTrigger | null {
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (!raw) return null;
+      const o = JSON.parse(raw) as Partial<SavedTrigger>;
+      if (!o || typeof o !== 'object' || o.mode == null || !(o.mode in TRIGGER_MODES)) return null;
+      return o as SavedTrigger;
+    } catch {
+      return null;
+    }
+  }
+  const saved = loadSaved();
+  const initMode = saved?.mode ?? TriggerMode.Race;
+
+  let side = $state<TriggerSide>(saved?.side ?? TriggerSide.Left);
+  let mode = $state<TriggerMode>(initMode);
+  let match = $state(saved?.match ?? true);
+  let live = $state(saved?.live ?? true);
+  // 默认值打底，再覆盖已存值，避免旧数据缺键。
+  let values = $state<Record<string, number>>({ ...defaultValues(initMode), ...(saved?.values ?? {}) });
+
+  // 任一设置变化即写回 localStorage。
+  $effect(() => {
+    const data: SavedTrigger = { side, mode, match, live, values: { ...values } };
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(data));
+    } catch {
+      /* 持久化失败不影响使用 */
+    }
+  });
 
   const modeDef = $derived(TRIGGER_MODES[mode]);
   const previewHex = $derived(
@@ -34,6 +68,10 @@
     if (!live || !controller.connected) return;
     clearTimeout(liveTimer);
     liveTimer = window.setTimeout(() => controller.sendTrigger({ mode, side, values, match }), 40);
+  }
+  // 关掉「实时下发」时取消待发帧，避免关闭后仍多发一帧。
+  function onLiveChange(v: boolean) {
+    if (!v) clearTimeout(liveTimer);
   }
   function setMode(next: TriggerMode) {
     mode = next;
@@ -87,7 +125,7 @@
       释放扳机
     </button>
     <label class="live">
-      <Switch bind:checked={live} label="拖动实时下发" />
+      <Switch bind:checked={live} label="拖动实时下发" onchange={onLiveChange} />
       <span>拖动实时下发</span>
     </label>
   </div>
@@ -127,6 +165,10 @@
   .field select {
     justify-self: start;
     min-width: 220px;
+  }
+  /* 分段控件作为 1fr 网格项会被拉伸成满宽空框，让它只占内容宽度并左对齐。 */
+  .grid :global(.seg) {
+    justify-self: start;
   }
   .hint {
     margin: 0 0 18px;

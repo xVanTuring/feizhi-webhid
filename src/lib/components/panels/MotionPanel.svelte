@@ -20,12 +20,18 @@
 >
   {#if !mapping.loaded}
     <div class="empty">
-      <div class="empty-icon">🧭</div>
-      <div class="empty-t">尚未读取配置</div>
-      <div class="empty-d">在左侧「配置档案」选择档位，点「读取」载入当前手柄配置后即可编辑。</div>
-      <button class="btn btn-primary" disabled={!controller.connected || mapping.busy} onclick={() => mapping.read()}>
-        读取配置档 {mapping.cfgId + 1}
-      </button>
+      {#if !controller.connected}
+        <div class="empty-icon">🔌</div>
+        <div class="empty-t">未连接手柄</div>
+        <div class="empty-d">先在上方<b>连接手柄</b>并读取配置，即可调体感 / 陀螺仪。</div>
+      {:else}
+        <div class="empty-icon">🧭</div>
+        <div class="empty-t">尚未读取配置</div>
+        <div class="empty-d">在左侧「配置档案」选择档位，点「读取」载入当前手柄配置后即可编辑。</div>
+        <button class="btn btn-primary" disabled={mapping.busy} onclick={() => mapping.read()}>
+          读取配置档 {mapping.cfgId + 1}
+        </button>
+      {/if}
     </div>
   {:else}
     <div class="field">
@@ -85,6 +91,10 @@
     color: var(--muted-2);
     max-width: 360px;
     margin-bottom: 6px;
+  }
+  .empty-d b {
+    color: var(--accent-2);
+    font-weight: 600;
   }
 
   .field {

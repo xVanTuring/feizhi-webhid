@@ -8,7 +8,6 @@ export const CMD_SAVE = 0xa6; // 166
 export const CMD_APPLY = 0xa2; // 162
 
 export const PKG_SIZE = 20; // NewXInput 每包字节数
-export const PKG_COUNT = 84; // V3.1 总包数
 
 export enum ControllerKey {
   Up = 0,
@@ -230,18 +229,10 @@ export function extractPackFromAck(bytes: Uint8Array): { total: number; num: num
   };
 }
 
-/** 初始化空白的 1680 字节配置缓冲区（全 0xFF）。 */
-export function createEmptyRawConfig(): Uint8Array {
-  const raw = new Uint8Array(PKG_COUNT * PKG_SIZE);
-  raw.fill(0xff);
-  return raw;
-}
-
 /** 按键映射在原始字节中的偏移（V3.1）。 */
 const KEY_TABLE_OFFSET = 13;
 const KEY_ENTRY_SIZE = 3;
 const MOTION_OFFSET = 137;
-const MOTION_EXTRA_OFFSET = 830;
 
 /**
  * 单个按键映射的语义形态。3 字节布局 [b0, b1, b2] 解析规则完全照搬反编译
@@ -469,13 +460,6 @@ export function getMotionMap(raw: Uint8Array): { mode: MotionMapType; sensitivit
     sensitivity: raw[MOTION_OFFSET + 4],
     deadZone: raw[MOTION_OFFSET + 3],
   };
-}
-
-/** 把原始配置按 PKG_SIZE 拆成包数组。 */
-export function splitRawToPacks(raw: Uint8Array): Uint8Array[] {
-  const packs: Uint8Array[] = [];
-  for (let i = 0; i < raw.length; i += PKG_SIZE) packs.push(raw.slice(i, i + PKG_SIZE));
-  return packs;
 }
 
 /** 从原始配置中读取 DataVersion（偏移 225/226，小端）。 */

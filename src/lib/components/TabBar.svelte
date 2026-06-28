@@ -82,6 +82,12 @@
   .tab.on svg {
     transform: translateY(-1px);
     filter: drop-shadow(0 0 6px var(--accent-glow));
+    animation: tab-pop 0.32s ease;
+  }
+  @keyframes tab-pop {
+    40% {
+      transform: translateY(-3px) scale(1.1);
+    }
   }
   .tab.on::after {
     content: "";
@@ -94,5 +100,12 @@
     border-radius: 2px;
     background: var(--accent);
     box-shadow: 0 0 8px var(--accent-glow);
+    animation: underline-grow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  @keyframes underline-grow {
+    from {
+      width: 0;
+      opacity: 0;
+    }
   }
 </style>

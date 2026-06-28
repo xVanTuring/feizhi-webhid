@@ -92,12 +92,18 @@
 <Panel title="按键映射" desc="点击上方手柄图上的按键、或直接在手柄上按下来选择，再设置映射。已映射的键会在手柄上高亮显示目标。">
   {#if !mapping.loaded}
     <div class="empty">
-      <div class="empty-icon">🎛️</div>
-      <div class="empty-t">尚未读取配置</div>
-      <div class="empty-d">在左侧「配置档案」选择档位，点「读取」载入当前手柄配置后即可编辑。</div>
-      <button class="btn btn-primary" disabled={!controller.connected || mapping.busy} onclick={() => mapping.read()}>
-        读取配置档 {mapping.cfgId + 1}
-      </button>
+      {#if !controller.connected}
+        <div class="empty-icon">🔌</div>
+        <div class="empty-t">未连接手柄</div>
+        <div class="empty-d">先在上方<b>连接手柄</b>并读取配置，即可编辑按键映射。</div>
+      {:else}
+        <div class="empty-icon">🎛️</div>
+        <div class="empty-t">尚未读取配置</div>
+        <div class="empty-d">在左侧「配置档案」选择档位，点「读取」载入当前手柄配置后即可编辑。</div>
+        <button class="btn btn-primary" disabled={mapping.busy} onclick={() => mapping.read()}>
+          读取配置档 {mapping.cfgId + 1}
+        </button>
+      {/if}
     </div>
   {:else}
     <!-- 选中键的映射编辑条 -->
@@ -217,6 +223,10 @@
     color: var(--muted-2);
     max-width: 360px;
     margin-bottom: 6px;
+  }
+  .empty-d b {
+    color: var(--accent-2);
+    font-weight: 600;
   }
 
   /* 编辑条 */
