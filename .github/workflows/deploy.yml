@@ -36,11 +36,7 @@ jobs:
       # svelte-check 类型检查 + vite 生产构建（base=/feizhi-webhid/）
       - run: pnpm build
 
-      # 首次运行自动启用 Pages（source = GitHub Actions）
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
+      # Pages 已在仓库设置中启用（source = GitHub Actions），直接上传产物
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
